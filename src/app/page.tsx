@@ -8,19 +8,10 @@ import { canvasStorage, type CanvasState } from "@/lib/storage";
 
 import { Button } from "@/components/ui/button";
 import {
-  Play,
   X,
-  Copy,
   ChevronDown,
-  Download,
-  Crop,
   Check,
-  Combine,
-  ZoomIn,
-  ZoomOut,
-  Maximize2,
   Upload,
-  Scissors,
   Filter,
   Plus,
   ImageIcon,
@@ -83,7 +74,17 @@ import { CanvasGrid } from "@/components/canvas/CanvasGrid";
 import { SelectionBoxComponent } from "@/components/canvas/SelectionBox";
 import { MiniMap } from "@/components/canvas/MiniMap";
 import { ZoomControls } from "@/components/canvas/ZoomControls";
+import { MobileToolbar } from "@/components/canvas/MobileToolbar";
+import { CanvasContextMenu } from "@/components/canvas/CanvasContextMenu";
 import Image from "next/image";
+
+// Import handlers
+import {
+  handleRun as handleRunHandler,
+  uploadImageDirect,
+  generateImage,
+} from "@/lib/handlers/generation-handler";
+import { handleRemoveBackground as handleRemoveBackgroundHandler } from "@/lib/handlers/background-handler";
 
 export default function OverlayPage() {
   const [images, setImages] = useState<PlacedImage[]>([]);
@@ -155,54 +156,6 @@ export default function OverlayPage() {
   const trpc = useTRPC();
 
   // Direct FAL upload function using proxy
-  const uploadImageDirect = async (dataUrl: string) => {
-    // Convert data URL to blob first
-    const response = await fetch(dataUrl);
-    const blob = await response.blob();
-
-    try {
-      // Check size before attempting upload
-      if (blob.size > 10 * 1024 * 1024) {
-        // 10MB warning
-        console.warn(
-          "Large image detected:",
-          (blob.size / 1024 / 1024).toFixed(2) + "MB"
-        );
-      }
-
-      // Upload directly to FAL through proxy (using the client instance)
-      const uploadResult = await falClient.storage.upload(blob);
-
-      return { url: uploadResult };
-    } catch (error: any) {
-      // Check for rate limit error
-      const isRateLimit =
-        error.status === 429 ||
-        error.message?.includes("429") ||
-        error.message?.includes("rate limit") ||
-        error.message?.includes("Rate limit");
-
-      if (isRateLimit) {
-        toast({
-          title: "Rate limit exceeded",
-          description:
-            "Add your FAL API key to bypass rate limits. Without an API key, uploads are limited.",
-          variant: "destructive",
-        });
-        // Open API key dialog automatically
-        setIsApiKeyDialogOpen(true);
-      } else {
-        toast({
-          title: "Failed to upload image",
-          description: error instanceof Error ? error.message : "Unknown error",
-          variant: "destructive",
-        });
-      }
-
-      // Re-throw the error so calling code knows upload failed
-      throw error;
-    }
-  };
 
   const { mutateAsync: removeBackground } = useMutation(
     trpc.removeBackground.mutationOptions()
@@ -1025,234 +978,22 @@ export default function OverlayPage() {
 
   // Handle context menu actions
   const handleRun = async () => {
-    if (!generationSettings.prompt) {
-      toast({
-        title: "No Prompt",
-        description: "Please enter a prompt to generate an image",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsGenerating(true);
-    const selectedImages = images.filter((img) => selectedIds.includes(img.id));
-
-    // If no images are selected, do text-to-image generation
-    if (selectedImages.length === 0) {
-      try {
-        toast({
-          title: "Generating image...",
-          description: "Creating image from text prompt",
-        });
-
-        const result = await generateTextToImage({
-          prompt: generationSettings.prompt,
-          loraUrl: generationSettings.loraUrl || undefined,
-          imageSize: "square",
-          apiKey: customApiKey || undefined,
-        });
-
-        // Add the generated image to the canvas
-        const id = `generated-${Date.now()}-${Math.random()}`;
-
-        // Place at center of viewport
-        const viewportCenterX =
-          (canvasSize.width / 2 - viewport.x) / viewport.scale;
-        const viewportCenterY =
-          (canvasSize.height / 2 - viewport.y) / viewport.scale;
-
-        // Use the actual dimensions from the result
-        const width = Math.min(result.width, 512); // Limit display size
-        const height = Math.min(result.height, 512);
-
-        setImages((prev) => [
-          ...prev,
-          {
-            id,
-            src: result.url,
-            x: viewportCenterX - width / 2,
-            y: viewportCenterY - height / 2,
-            width,
-            height,
-            rotation: 0,
-            isGenerated: true,
-          },
-        ]);
-
-        // Select the new image
-        setSelectedIds([id]);
-
-        toast({
-          title: "Success",
-          description: "Image generated successfully",
-        });
-      } catch (error) {
-        console.error("Error generating image:", error);
-        toast({
-          title: "Generation failed",
-          description:
-            error instanceof Error ? error.message : "Failed to generate image",
-          variant: "destructive",
-        });
-      } finally {
-        setIsGenerating(false);
-      }
-      return;
-    }
-
-    // Process each selected image individually for image-to-image
-    let successCount = 0;
-    let failureCount = 0;
-
-    for (const img of selectedImages) {
-      try {
-        // Get crop values
-        const cropX = img.cropX || 0;
-        const cropY = img.cropY || 0;
-        const cropWidth = img.cropWidth || 1;
-        const cropHeight = img.cropHeight || 1;
-
-        // Load the image
-        const imgElement = new window.Image();
-        imgElement.crossOrigin = "anonymous"; // Enable CORS
-        imgElement.src = img.src;
-        await new Promise((resolve) => {
-          imgElement.onload = resolve;
-        });
-
-        // Create a canvas for the image at original resolution
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("Failed to get canvas context");
-
-        // Calculate the effective original dimensions accounting for crops
-        let effectiveWidth = imgElement.naturalWidth;
-        let effectiveHeight = imgElement.naturalHeight;
-
-        if (cropWidth !== 1 || cropHeight !== 1) {
-          effectiveWidth = cropWidth * imgElement.naturalWidth;
-          effectiveHeight = cropHeight * imgElement.naturalHeight;
-        }
-
-        // Set canvas size to the original resolution (not display size)
-        canvas.width = effectiveWidth;
-        canvas.height = effectiveHeight;
-
-        console.log(
-          `Processing image at ${canvas.width}x${canvas.height} (original res, display: ${img.width}x${img.height})`
-        );
-
-        // Always use the crop values (default to full image if not set)
-        ctx.drawImage(
-          imgElement,
-          cropX * imgElement.naturalWidth,
-          cropY * imgElement.naturalHeight,
-          cropWidth * imgElement.naturalWidth,
-          cropHeight * imgElement.naturalHeight,
-          0,
-          0,
-          canvas.width,
-          canvas.height
-        );
-
-        // Convert to blob and upload
-        const blob = await new Promise<Blob>((resolve) => {
-          canvas.toBlob((blob) => resolve(blob!), "image/png");
-        });
-
-        const reader = new FileReader();
-        const dataUrl = await new Promise<string>((resolve) => {
-          reader.onload = (e) => resolve(e.target?.result as string);
-          reader.readAsDataURL(blob);
-        });
-
-        let uploadResult;
-        try {
-          uploadResult = await uploadImageDirect(dataUrl);
-        } catch (uploadError) {
-          console.error("Failed to upload image:", uploadError);
-          failureCount++;
-          // Skip this image if upload fails
-          continue;
-        }
-
-        // Only proceed with generation if upload succeeded
-        if (!uploadResult?.url) {
-          console.error("Upload succeeded but no URL returned");
-          failureCount++;
-          continue;
-        }
-
-        // Calculate output size maintaining aspect ratio
-        const aspectRatio = canvas.width / canvas.height;
-        const baseSize = 512;
-        let outputWidth = baseSize;
-        let outputHeight = baseSize;
-
-        if (aspectRatio > 1) {
-          outputHeight = Math.round(baseSize / aspectRatio);
-        } else {
-          outputWidth = Math.round(baseSize * aspectRatio);
-        }
-
-        const groupId = `single-${Date.now()}-${Math.random()}`;
-        generateImage(
-          uploadResult.url,
-          img.x + img.width + 20,
-          img.y,
-          groupId,
-          outputWidth,
-          outputHeight
-        );
-        successCount++;
-      } catch (error) {
-        console.error("Error processing image:", error);
-        failureCount++;
-        toast({
-          title: "Failed to process image",
-          description:
-            error instanceof Error ? error.message : "Failed to process image",
-          variant: "destructive",
-        });
-      }
-    }
-
-    // Done processing all images
-    setIsGenerating(false);
-  };
-
-  const generateImage = (
-    imageUrl: string,
-    x: number,
-    y: number,
-    groupId: string,
-    width: number = 300,
-    height: number = 300
-  ) => {
-    const placeholderId = `generated-${Date.now()}`;
-    setImages((prev) => [
-      ...prev,
-      {
-        id: placeholderId,
-        src: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
-        x,
-        y,
-        width,
-        height,
-        rotation: 0,
-        isGenerated: true,
-        parentGroupId: groupId,
-      },
-    ]);
-
-    // Store generation params
-    setActiveGenerations((prev) =>
-      new Map(prev).set(placeholderId, {
-        imageUrl,
-        prompt: generationSettings.prompt,
-        loraUrl: generationSettings.loraUrl,
-      })
-    );
+    await handleRunHandler({
+      images,
+      selectedIds,
+      generationSettings,
+      customApiKey,
+      canvasSize,
+      viewport,
+      falClient,
+      setImages,
+      setSelectedIds,
+      setActiveGenerations,
+      setIsGenerating,
+      setIsApiKeyDialogOpen,
+      toast,
+      generateTextToImage,
+    });
   };
 
   const handleDelete = () => {
@@ -1277,107 +1018,17 @@ export default function OverlayPage() {
   };
 
   const handleRemoveBackground = async () => {
-    if (selectedIds.length === 0) return;
-
-    try {
-      saveToHistory();
-
-      for (const imageId of selectedIds) {
-        const image = images.find((img) => img.id === imageId);
-        if (!image) continue;
-
-        // Show loading state
-        toast({
-          title: "Processing...",
-          description: "Removing background from image",
-        });
-
-        // Process the image to get the cropped/processed version
-        const imgElement = new window.Image();
-        imgElement.crossOrigin = "anonymous"; // Enable CORS
-        imgElement.src = image.src;
-        await new Promise((resolve) => {
-          imgElement.onload = resolve;
-        });
-
-        // Create canvas for processing
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("Failed to get canvas context");
-
-        // Get crop values
-        const cropX = image.cropX || 0;
-        const cropY = image.cropY || 0;
-        const cropWidth = image.cropWidth || 1;
-        const cropHeight = image.cropHeight || 1;
-
-        // Set canvas size based on crop
-        canvas.width = cropWidth * imgElement.naturalWidth;
-        canvas.height = cropHeight * imgElement.naturalHeight;
-
-        // Draw cropped image
-        ctx.drawImage(
-          imgElement,
-          cropX * imgElement.naturalWidth,
-          cropY * imgElement.naturalHeight,
-          cropWidth * imgElement.naturalWidth,
-          cropHeight * imgElement.naturalHeight,
-          0,
-          0,
-          canvas.width,
-          canvas.height
-        );
-
-        // Convert to blob and upload
-        const blob = await new Promise<Blob>((resolve) => {
-          canvas.toBlob((blob) => resolve(blob!), "image/png");
-        });
-
-        const reader = new FileReader();
-        const dataUrl = await new Promise<string>((resolve) => {
-          reader.onload = (e) => resolve(e.target?.result as string);
-          reader.readAsDataURL(blob);
-        });
-
-        // Upload the processed image
-        const uploadResult = await uploadImageDirect(dataUrl);
-
-        // Remove background using the API
-        const result = await removeBackground({
-          imageUrl: uploadResult?.url || "",
-          apiKey: customApiKey || undefined,
-        });
-
-        // Update the image in place
-        setImages((prev) =>
-          prev.map((img) =>
-            img.id === imageId
-              ? {
-                  ...img,
-                  src: result.url,
-                  // Remove crop values since we've applied them
-                  cropX: undefined,
-                  cropY: undefined,
-                  cropWidth: undefined,
-                  cropHeight: undefined,
-                }
-              : img
-          )
-        );
-      }
-
-      toast({
-        title: "Success",
-        description: "Background removed successfully",
-      });
-    } catch (error) {
-      console.error("Error removing background:", error);
-      toast({
-        title: "Failed to remove background",
-        description: error instanceof Error ? error.message : "Unknown error",
-        variant: "destructive",
-      });
-    }
+    await handleRemoveBackgroundHandler({
+      images,
+      selectedIds,
+      setImages,
+      toast,
+      saveToHistory,
+      removeBackground,
+      customApiKey,
+      falClient,
+      setIsApiKeyDialogOpen,
+    });
   };
 
   const handleIsolate = async () => {
@@ -1448,7 +1099,12 @@ export default function OverlayPage() {
       });
 
       // Upload the processed image
-      const uploadResult = await uploadImageDirect(dataUrl);
+      const uploadResult = await uploadImageDirect(
+        dataUrl,
+        falClient,
+        toast,
+        setIsApiKeyDialogOpen
+      );
 
       // Isolate object using EVF-SAM2
       console.log("Calling isolateObject with:", {
@@ -2205,175 +1861,23 @@ export default function OverlayPage() {
                 )}
               </div>
             </ContextMenuTrigger>
-            <ContextMenuContent>
-              <ContextMenuItem
-                onClick={handleRun}
-                disabled={isGenerating || !generationSettings.prompt.trim()}
-                className="flex items-center justify-between gap-2"
-              >
-                <div className="flex items-center gap-2">
-                  {isGenerating ? (
-                    <SpinnerIcon className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4" />
-                  )}
-                  <span>Run</span>
-                </div>
-                <ShortcutBadge
-                  variant="alpha"
-                  size="xs"
-                  shortcut={
-                    checkOS("Win") || checkOS("Linux")
-                      ? "ctrl+enter"
-                      : "meta+enter"
-                  }
-                />
-              </ContextMenuItem>
-              <ContextMenuItem
-                onClick={handleDuplicate}
-                disabled={selectedIds.length === 0}
-                className="flex items-center gap-2"
-              >
-                <Copy className="h-4 w-4" />
-                Duplicate
-              </ContextMenuItem>
-              <ContextMenuItem
-                onClick={() => {
-                  if (selectedIds.length === 1) {
-                    setCroppingImageId(selectedIds[0]);
-                  }
-                }}
-                disabled={selectedIds.length !== 1}
-                className="flex items-center gap-2"
-              >
-                <Crop className="h-4 w-4" />
-                Crop
-              </ContextMenuItem>
-              <ContextMenuItem
-                onClick={handleRemoveBackground}
-                disabled={selectedIds.length === 0}
-                className="flex items-center gap-2"
-              >
-                <Scissors className="h-4 w-4" />
-                Remove Background
-              </ContextMenuItem>
-              <ContextMenuSub>
-                <ContextMenuSubTrigger
-                  disabled={selectedIds.length !== 1}
-                  className="flex items-center gap-2"
-                  onMouseEnter={() => {
-                    // Reset input value and set target when hovering over the submenu trigger
-                    setIsolateInputValue("");
-                    if (selectedIds.length === 1) {
-                      setIsolateTarget(selectedIds[0]);
-                    }
-                  }}
-                >
-                  <Filter className="h-4 w-4" />
-                  Isolate Object
-                </ContextMenuSubTrigger>
-                <ContextMenuSubContent
-                  className="w-72 p-3"
-                  sideOffset={5}
-                  onPointerDownOutside={(e) => e.preventDefault()}
-                >
-                  <div
-                    className="flex flex-col gap-2"
-                    onMouseDown={(e) => e.stopPropagation()}
-                  >
-                    <Label
-                      htmlFor="isolate-context-input"
-                      className="text-sm font-medium"
-                    >
-                      What to isolate:
-                    </Label>
-                    <div className="flex gap-2">
-                      <Input
-                        id="isolate-context-input"
-                        type="text"
-                        placeholder="e.g. car, face, person"
-                        value={isolateInputValue}
-                        onChange={(e) => setIsolateInputValue(e.target.value)}
-                        style={{ fontSize: "16px" }}
-                        onKeyDown={(e) => {
-                          if (
-                            e.key === "Enter" &&
-                            isolateInputValue.trim() &&
-                            !isIsolating
-                          ) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleIsolate();
-                          }
-                        }}
-                        onFocus={(e) => {
-                          // Select all text on focus for easier replacement
-                          e.target.select();
-                        }}
-                        className="flex-1"
-                        autoFocus
-                        disabled={isIsolating}
-                      />
-                      <Button
-                        type="button"
-                        variant="primary"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          if (isolateInputValue.trim() && !isIsolating) {
-                            handleIsolate();
-                          }
-                        }}
-                        disabled={!isolateInputValue.trim() || isIsolating}
-                      >
-                        {isIsolating ? (
-                          <>
-                            <SpinnerIcon className="h-4 w-4 animate-spin mr-1" />
-                            Processing...
-                          </>
-                        ) : (
-                          "Enter"
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </ContextMenuSubContent>
-              </ContextMenuSub>
-              <ContextMenuItem
-                onClick={handleCombineImages}
-                disabled={selectedIds.length < 2}
-                className="flex items-center gap-2"
-              >
-                <Combine className="h-4 w-4" />
-                Combine Images
-              </ContextMenuItem>
-              <ContextMenuItem
-                onClick={() => {
-                  selectedIds.forEach((id) => {
-                    const image = images.find((img) => img.id === id);
-                    if (image) {
-                      const link = document.createElement("a");
-                      link.download = `image-${Date.now()}.png`;
-                      link.href = image.src;
-                      link.click();
-                    }
-                  });
-                }}
-                disabled={selectedIds.length === 0}
-                className="flex items-center gap-2"
-              >
-                <Download className="h-4 w-4" />
-                Download
-              </ContextMenuItem>
-              <ContextMenuItem
-                onClick={handleDelete}
-                disabled={selectedIds.length === 0}
-                className="flex items-center gap-2 text-destructive"
-              >
-                <X className="h-4 w-4" />
-                Delete
-              </ContextMenuItem>
-            </ContextMenuContent>
+            <CanvasContextMenu
+              selectedIds={selectedIds}
+              images={images}
+              isGenerating={isGenerating}
+              generationSettings={generationSettings}
+              isolateInputValue={isolateInputValue}
+              isIsolating={isIsolating}
+              handleRun={handleRun}
+              handleDuplicate={handleDuplicate}
+              handleRemoveBackground={handleRemoveBackground}
+              handleCombineImages={handleCombineImages}
+              handleDelete={handleDelete}
+              handleIsolate={handleIsolate}
+              setCroppingImageId={setCroppingImageId}
+              setIsolateInputValue={setIsolateInputValue}
+              setIsolateTarget={setIsolateTarget}
+            />
           </ContextMenu>
 
           <div className="absolute top-4 left-4 z-20 flex flex-col items-start gap-2">
@@ -2389,110 +1893,18 @@ export default function OverlayPage() {
             </div>
 
             {/* Mobile tool icons - animated based on selection */}
-            <div
-              className={cn(
-                "flex items-center flex-col gap-1 md:hidden bg-background/80 border rounded p-1",
-                "transition-transform duration-300 ease-in-out",
-                selectedIds.length > 0
-                  ? "translate-x-0"
-                  : "-translate-x-[calc(100%+1rem)]"
-              )}
-            >
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleRun}
-                disabled={isGenerating || !generationSettings.prompt.trim()}
-                className="w-12 h-12 p-0"
-                title="Run"
-              >
-                {isGenerating ? (
-                  <SpinnerIcon className="h-12 w-12 animate-spin" />
-                ) : (
-                  <Play className="h-12 w-12" />
-                )}
-              </Button>
-
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleDuplicate}
-                disabled={selectedIds.length === 0}
-                className="w-12 h-12 p-0"
-                title="Duplicate"
-              >
-                <Copy className="h-12 w-12" />
-              </Button>
-
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  if (selectedIds.length === 1) {
-                    setCroppingImageId(selectedIds[0]);
-                  }
-                }}
-                disabled={selectedIds.length !== 1}
-                className="w-12 h-12 p-0"
-                title="Crop"
-              >
-                <Crop className="h-12 w-12" />
-              </Button>
-
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleRemoveBackground}
-                disabled={selectedIds.length === 0}
-                className="w-12 h-12 p-0"
-                title="Remove Background"
-              >
-                <Scissors className="h-12 w-12" />
-              </Button>
-
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleCombineImages}
-                disabled={selectedIds.length < 2}
-                className="w-12 h-12 p-0"
-                title="Combine Images"
-              >
-                <Combine className="h-12 w-12" />
-              </Button>
-
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  selectedIds.forEach((id) => {
-                    const image = images.find((img) => img.id === id);
-                    if (image) {
-                      const link = document.createElement("a");
-                      link.download = `image-${Date.now()}.png`;
-                      link.href = image.src;
-                      link.click();
-                    }
-                  });
-                }}
-                disabled={selectedIds.length === 0}
-                className="w-12 h-12 p-0"
-                title="Download"
-              >
-                <Download className="h-12 w-12" />
-              </Button>
-
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleDelete}
-                disabled={selectedIds.length === 0}
-                className="w-12 h-12 p-0 text-destructive hover:text-destructive"
-                title="Delete"
-              >
-                <Trash2 className="h-12 w-12" />
-              </Button>
-            </div>
+            <MobileToolbar
+              selectedIds={selectedIds}
+              images={images}
+              isGenerating={isGenerating}
+              generationSettings={generationSettings}
+              handleRun={handleRun}
+              handleDuplicate={handleDuplicate}
+              handleRemoveBackground={handleRemoveBackground}
+              handleCombineImages={handleCombineImages}
+              handleDelete={handleDelete}
+              setCroppingImageId={setCroppingImageId}
+            />
           </div>
 
           <div className="fixed bottom-0 left-0 right-0 md:absolute md:bottom-4 md:left-1/2 md:transform md:-translate-x-1/2 z-20 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] md:p-0 md:pb-0 md:max-w-[600px]">
