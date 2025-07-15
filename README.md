@@ -1,37 +1,25 @@
-# Infinite Kanvas - AI Image Editor Infinite Canvas (Powered by Flux Kontext Dev)
+# Infinite Kanvas
 
 ![Infinite Kanvas](./public/og-img-compress.png)
 
-An interactive canvas application that leverages fal.ai's powerful AI models for real-time image manipulation and style transfer. Built with Next.js, React Konva, and tRPC.
+An infinite canvas image editor with AI transformations using fal.ai. Built with Next.js, React Konva, and tRPC.
 
-## What is this?
+## Features
 
-Infinite Canvas is a web-based image editor that combines traditional canvas manipulation tools with cutting-edge AI capabilities. Users can drag images onto an infinite canvas, position them freely, and apply various AI transformations including style transfer, background removal, and object isolation.
+- Infinite canvas with pan/zoom
+- Drag & drop image upload
+- AI style transfer via Flux Kontext LoRA
+- Background removal and object isolation
+- Real-time streaming of AI results
+- Multi-selection and image manipulation
+- Auto-save to IndexedDB
+- Undo/redo support
 
-## Key Features
+## Technical Details
 
-- **Infinite Canvas**: Pan, zoom, and navigate through an unlimited workspace
-- **Drag & Drop**: Import images via drag-and-drop or file upload
-- **AI Style Transfer**: Apply predefined styles (Simpsons, Anime, Oil Painting, etc.) or custom LoRA models
-- **Background Removal**: Remove backgrounds from images using AI
-- **Object Isolation**: Extract specific objects from images using natural language descriptions
-- **Real-time Streaming**: Watch AI transformations happen in real-time
-- **Multi-selection**: Select and transform multiple images at once
-- **Image Manipulation**: Crop, combine, duplicate, and arrange images
-- **Persistent Storage**: Automatically saves your work to IndexedDB
-- **Undo/Redo**: Full history support for all operations
-- **Mobile Support**: Touch gestures for panning and zooming
+### Canvas
 
-## Technical Architecture
-
-### Frontend Canvas Engine
-
-The application uses React Konva (a React wrapper for Konva.js) to provide a performant 2D canvas. Key implementation details:
-
-- **Virtual Viewport**: Only renders visible images for performance optimization
-- **Custom Image Component**: Handles selection, dragging, and transformations
-- **Streaming Updates**: Images update in real-time as AI processes them
-- **Gesture Support**: Touch events for mobile, mouse events for desktop, with middle-click panning
+React Konva for 2D canvas rendering with viewport culling for performance.
 
 ### fal.ai Integration
 
@@ -150,11 +138,8 @@ Uses Bria's specialized background removal model:
 
    # Optional
    KV_REST_API_URL=
+   KV_REST_API_TOKEN=
    ```
-
-KV_REST_API_TOKEN=
-
-```
 
 4. Run development server: `npm run dev`
 
@@ -180,4 +165,3 @@ The app is optimized for Vercel deployment:
 ## License
 
 MIT
-```
