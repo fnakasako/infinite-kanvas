@@ -12,7 +12,6 @@ const nextConfig = {
   },
   images: {
     domains: ["fal.ai", "storage.googleapis.com"],
-    unoptimized: true,
     remotePatterns: [
       {
         protocol: "https",

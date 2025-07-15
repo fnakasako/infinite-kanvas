@@ -83,6 +83,7 @@ import { CanvasGrid } from "@/components/canvas/CanvasGrid";
 import { SelectionBoxComponent } from "@/components/canvas/SelectionBox";
 import { MiniMap } from "@/components/canvas/MiniMap";
 import { ZoomControls } from "@/components/canvas/ZoomControls";
+import Image from "next/image";
 
 export default function OverlayPage() {
   const [images, setImages] = useState<PlacedImage[]>([]);
@@ -2857,9 +2858,11 @@ export default function OverlayPage() {
                     )}
                   >
                     <div className="relative w-full aspect-square rounded-md overflow-hidden">
-                      <img
+                      <Image
                         src={model.imageSrc}
                         alt={model.name}
+                        width={200}
+                        height={200}
                         className="w-full h-full object-cover"
                       />
                       {generationSettings.styleId === model.id && (
