@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import {
   Stage,
   Layer,
@@ -48,6 +48,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useSubscription } from "@trpc/tanstack-react-query";
 import { LoadingAnimation } from "@/components/ui/loading-animation";
 import useImage from "use-image";
+import { useRef, useEffect, useState as useStateReact } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -483,6 +484,67 @@ const CropOverlay: React.FC<{
   );
 };
 
+// Custom hook for streaming images that prevents flickering
+const useStreamingImage = (src: string) => {
+  const [currentImage, setCurrentImage] = useState<
+    HTMLImageElement | undefined
+  >(undefined);
+  const [isLoading, setIsLoading] = useState(false);
+  const loadingRef = useRef<{ src: string; img: HTMLImageElement } | null>(
+    null
+  );
+
+  useEffect(() => {
+    if (!src) {
+      setCurrentImage(undefined);
+      return;
+    }
+
+    // If we already have this image loaded, don't reload it
+    if (currentImage && currentImage.src === src) {
+      return;
+    }
+
+    // If we're already loading this exact URL, don't start another load
+    if (loadingRef.current && loadingRef.current.src === src) {
+      return;
+    }
+
+    setIsLoading(true);
+    const img = new window.Image();
+    img.crossOrigin = "anonymous";
+
+    loadingRef.current = { src, img };
+
+    img.onload = () => {
+      // Only update if this is still the image we want to load
+      if (loadingRef.current && loadingRef.current.src === src) {
+        setCurrentImage(img);
+        setIsLoading(false);
+        loadingRef.current = null;
+      }
+    };
+
+    img.onerror = () => {
+      if (loadingRef.current && loadingRef.current.src === src) {
+        setIsLoading(false);
+        loadingRef.current = null;
+      }
+    };
+
+    img.src = src;
+
+    return () => {
+      // Clean up if component unmounts or src changes before load completes
+      if (loadingRef.current && loadingRef.current.src === src) {
+        loadingRef.current = null;
+      }
+    };
+  }, [src]);
+
+  return [currentImage, isLoading] as const;
+};
+
 // Wrapper component to handle image loading for crop overlay
 const CropOverlayWrapper: React.FC<{
   image: PlacedImage;
@@ -538,7 +600,10 @@ const CanvasImage: React.FC<{
 }) => {
   const shapeRef = useRef<Konva.Image>(null);
   const trRef = useRef<Konva.Transformer>(null);
-  const [img] = useImage(image.src, "anonymous");
+  // Use streaming image hook for generated images to prevent flicker
+  const [streamingImg] = useStreamingImage(image.isGenerated ? image.src : "");
+  const [normalImg] = useImage(image.isGenerated ? "" : image.src, "anonymous");
+  const img = image.isGenerated ? streamingImg : normalImg;
   const [isHovered, setIsHovered] = useState(false);
 
   React.useEffect(() => {
