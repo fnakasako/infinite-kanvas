@@ -13,6 +13,12 @@ import {
   Line,
 } from "react-konva";
 import Konva from "konva";
+import {
+  canvasStorage,
+  type CanvasState,
+  type CanvasElement,
+  type ImageTransform,
+} from "@/lib/storage";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -191,6 +197,30 @@ interface SelectionBox {
   endY: number;
   visible: boolean;
 }
+
+// Helper to convert PlacedImage to storage format
+const imageToCanvasElement = (image: PlacedImage): CanvasElement => ({
+  id: image.id,
+  type: "image",
+  imageId: image.id, // We'll use the same ID for both
+  transform: {
+    x: image.x,
+    y: image.y,
+    scale: 1, // We store width/height separately, so scale is 1
+    rotation: image.rotation,
+    ...(image.cropX !== undefined && {
+      cropBox: {
+        x: image.cropX,
+        y: image.cropY || 0,
+        width: image.cropWidth || 1,
+        height: image.cropHeight || 1,
+      },
+    }),
+  },
+  zIndex: 0, // We'll use array order instead
+  width: image.width,
+  height: image.height,
+});
 
 // Component for handling streaming generation
 const StreamingImage: React.FC<{
@@ -735,8 +765,7 @@ const CanvasImage: React.FC<{
 export default function OverlayPage() {
   const [images, setImages] = useState<PlacedImage[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  // Get the overlay style model
-  const overlayStyle = styleModels.find((m) => m.overlay);
+  const [isStorageLoaded, setIsStorageLoaded] = useState(false);
   const simpsonsStyle = styleModels.find((m) => m.id === "simpsons");
   const { toast } = useToast();
 
@@ -746,8 +775,6 @@ export default function OverlayPage() {
       loraUrl: simpsonsStyle?.loraUrl || "",
       styleId: simpsonsStyle?.id || "simpsons",
     });
-  const [showSettings, setShowSettings] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeGenerations, setActiveGenerations] = useState<
     Map<string, ActiveGeneration>
@@ -792,6 +819,7 @@ export default function OverlayPage() {
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false);
   const [customApiKey, setCustomApiKey] = useState<string>("");
   const [tempApiKey, setTempApiKey] = useState<string>("");
+  const [isSaving, setIsSaving] = useState(false);
 
   // Touch event states for mobile
   const [lastTouchDistance, setLastTouchDistance] = useState<number | null>(
@@ -819,6 +847,100 @@ export default function OverlayPage() {
   const { mutateAsync: generateTextToImage } = useMutation(
     trpc.generateTextToImage.mutationOptions()
   );
+
+  // Save current state to storage
+  const saveToStorage = useCallback(async () => {
+    try {
+      setIsSaving(true);
+
+      // Save canvas state (positions, transforms, etc.)
+      const canvasState: CanvasState = {
+        elements: images.map(imageToCanvasElement),
+        backgroundColor: "#ffffff",
+        lastModified: Date.now(),
+        viewport: viewport,
+      };
+      canvasStorage.saveCanvasState(canvasState);
+
+      // Save actual image data to IndexedDB
+      for (const image of images) {
+        // Skip if it's a placeholder for generation
+        if (
+          image.src.startsWith("data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP")
+        )
+          continue;
+
+        // Check if we already have this image stored
+        const existingImage = await canvasStorage.getImage(image.id);
+        if (!existingImage) {
+          await canvasStorage.saveImage(image.src, image.id);
+        }
+      }
+
+      // Clean up unused images
+      await canvasStorage.cleanupOldData();
+
+      // Brief delay to show the indicator
+      setTimeout(() => setIsSaving(false), 300);
+    } catch (error) {
+      console.error("Failed to save to storage:", error);
+      setIsSaving(false);
+    }
+  }, [images, viewport]);
+
+  // Load state from storage
+  const loadFromStorage = useCallback(async () => {
+    try {
+      const canvasState = canvasStorage.getCanvasState();
+      if (!canvasState) {
+        setIsStorageLoaded(true);
+        return;
+      }
+
+      const loadedImages: PlacedImage[] = [];
+
+      for (const element of canvasState.elements) {
+        if (element.type === "image" && element.imageId) {
+          const imageData = await canvasStorage.getImage(element.imageId);
+          if (imageData) {
+            loadedImages.push({
+              id: element.id,
+              src: imageData.originalDataUrl,
+              x: element.transform.x,
+              y: element.transform.y,
+              width: element.width || 300,
+              height: element.height || 300,
+              rotation: element.transform.rotation,
+              ...(element.transform.cropBox && {
+                cropX: element.transform.cropBox.x,
+                cropY: element.transform.cropBox.y,
+                cropWidth: element.transform.cropBox.width,
+                cropHeight: element.transform.cropBox.height,
+              }),
+            });
+          }
+        }
+      }
+
+      if (loadedImages.length > 0) {
+        setImages(loadedImages);
+
+        // Restore viewport if available
+        if (canvasState.viewport) {
+          setViewport(canvasState.viewport);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load from storage:", error);
+      toast({
+        title: "Failed to restore canvas",
+        description: "Starting with a fresh canvas",
+        variant: "destructive",
+      });
+    } finally {
+      setIsStorageLoaded(true);
+    }
+  }, [toast]);
 
   // Check OS for keyboard shortcut display
   const checkOS = (os?: string) => {
@@ -941,13 +1063,34 @@ export default function OverlayPage() {
     return () => window.removeEventListener("resize", checkScreenSize);
   }, []);
 
-  // Load default images
+  // Load from storage on mount
   useEffect(() => {
+    loadFromStorage();
+  }, [loadFromStorage]);
+
+  // Auto-save to storage when images change (with debounce)
+  useEffect(() => {
+    if (!isStorageLoaded) return; // Don't save until we've loaded
+
+    const timeoutId = setTimeout(() => {
+      saveToStorage();
+    }, 1000); // Save after 1 second of no changes
+
+    return () => clearTimeout(timeoutId);
+  }, [images, viewport, isStorageLoaded, saveToStorage]);
+
+  // Load default images only if no saved state
+  useEffect(() => {
+    if (!isStorageLoaded) return;
+    if (images.length > 0) return; // Already have images from storage
+
     const loadDefaultImages = async () => {
       const defaultImagePaths = [
         "/hat.png",
         "/man.png",
-        "/dog.png",
+        "/chad.png",
+        "/anime.png",
+        "/cat.jpg",
         "/overlay.png",
       ];
       const loadedImages: PlacedImage[] = [];
@@ -1007,7 +1150,7 @@ export default function OverlayPage() {
     };
 
     loadDefaultImages();
-  }, []);
+  }, [isStorageLoaded, images.length]);
 
   // Helper function to create a cropped image
   const createCroppedImage = async (
@@ -1129,20 +1272,8 @@ export default function OverlayPage() {
     });
   };
 
-  // Handle drag and drop
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(false);
 
     // Get drop position relative to the stage
     const stage = stageRef.current;
@@ -1452,7 +1583,6 @@ export default function OverlayPage() {
   // Handle context menu actions
   const handleRun = async () => {
     if (!generationSettings.prompt) {
-      setShowSettings(true);
       toast({
         title: "No Prompt",
         description: "Please enter a prompt to generate an image",
@@ -2315,8 +2445,6 @@ export default function OverlayPage() {
     <div
       className="bg-background text-foreground font-focal relative flex flex-col w-full overflow-hidden h-screen"
       style={{ height: "100dvh" }}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {/* Render streaming components for active generations */}
@@ -3009,6 +3137,28 @@ export default function OverlayPage() {
                   <Button
                     variant="secondary"
                     size="sm"
+                    onClick={async () => {
+                      if (
+                        confirm("Clear all saved data? This cannot be undone.")
+                      ) {
+                        await canvasStorage.clearAll();
+                        setImages([]);
+                        setViewport({ x: 0, y: 0, scale: 1 });
+                        toast({
+                          title: "Storage cleared",
+                          description: "All saved data has been removed",
+                        });
+                      }
+                    }}
+                    className="h-8 px-2 bg-destructive/10 border border-destructive/20 gap-1 text-destructive hover:bg-destructive/20"
+                    title="Clear storage"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    <span className="text-xs">Clear</span>
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={() => setIsApiKeyDialogOpen(true)}
                     className={cn(
                       "h-8 px-3 gap-2",
@@ -3225,72 +3375,77 @@ export default function OverlayPage() {
           </div>
 
           {/* Mini-map */}
-          {images.length > 0 && (
-            <div className="absolute top-4 right-2 md:right-4 z-20 bg-background/95 border rounded shadow-sm p-1 md:p-2">
-              <div className="relative w-32 h-24 md:w-48 md:h-32 bg-muted rounded overflow-hidden">
-                {/* Calculate bounds of all content */}
-                {(() => {
-                  let minX = Infinity,
-                    minY = Infinity;
-                  let maxX = -Infinity,
-                    maxY = -Infinity;
+          <div className="absolute top-4 right-2 md:right-4 z-20 bg-background/95 border rounded shadow-sm p-1 md:p-2">
+            <div className="relative w-32 h-24 md:w-48 md:h-32 bg-muted rounded overflow-hidden">
+              {/* Calculate bounds of all content */}
+              {(() => {
+                let minX = Infinity,
+                  minY = Infinity;
+                let maxX = -Infinity,
+                  maxY = -Infinity;
 
-                  images.forEach((img) => {
-                    minX = Math.min(minX, img.x);
-                    minY = Math.min(minY, img.y);
-                    maxX = Math.max(maxX, img.x + img.width);
-                    maxY = Math.max(maxY, img.y + img.height);
-                  });
+                images.forEach((img) => {
+                  minX = Math.min(minX, img.x);
+                  minY = Math.min(minY, img.y);
+                  maxX = Math.max(maxX, img.x + img.width);
+                  maxY = Math.max(maxY, img.y + img.height);
+                });
 
-                  const contentWidth = maxX - minX;
-                  const contentHeight = maxY - minY;
-                  const miniMapWidth = 192; // 48 * 4 (w-48 in tailwind)
-                  const miniMapHeight = 128; // 32 * 4 (h-32 in tailwind)
+                const contentWidth = maxX - minX;
+                const contentHeight = maxY - minY;
+                const miniMapWidth = 192; // 48 * 4 (w-48 in tailwind)
+                const miniMapHeight = 128; // 32 * 4 (h-32 in tailwind)
 
-                  // Calculate scale to fit content in minimap
-                  const scaleX = miniMapWidth / contentWidth;
-                  const scaleY = miniMapHeight / contentHeight;
-                  const scale = Math.min(scaleX, scaleY) * 0.9; // 90% to add padding
+                // Calculate scale to fit content in minimap
+                const scaleX = miniMapWidth / contentWidth;
+                const scaleY = miniMapHeight / contentHeight;
+                const scale = Math.min(scaleX, scaleY) * 0.9; // 90% to add padding
 
-                  // Center content in minimap
-                  const offsetX = (miniMapWidth - contentWidth * scale) / 2;
-                  const offsetY = (miniMapHeight - contentHeight * scale) / 2;
+                // Center content in minimap
+                const offsetX = (miniMapWidth - contentWidth * scale) / 2;
+                const offsetY = (miniMapHeight - contentHeight * scale) / 2;
 
-                  return (
-                    <>
-                      {/* Render tiny versions of images */}
-                      {images.map((img) => (
-                        <div
-                          key={img.id}
-                          className="absolute bg-primary/50"
-                          style={{
-                            left: `${(img.x - minX) * scale + offsetX}px`,
-                            top: `${(img.y - minY) * scale + offsetY}px`,
-                            width: `${img.width * scale}px`,
-                            height: `${img.height * scale}px`,
-                          }}
-                        />
-                      ))}
-
-                      {/* Viewport indicator */}
+                return (
+                  <>
+                    {/* Render tiny versions of images */}
+                    {images.map((img) => (
                       <div
-                        className="absolute border-2 border-blue-500 bg-blue-500/10"
+                        key={img.id}
+                        className="absolute bg-primary/50"
                         style={{
-                          left: `${(-viewport.x / viewport.scale - minX) * scale + offsetX}px`,
-                          top: `${(-viewport.y / viewport.scale - minY) * scale + offsetY}px`,
-                          width: `${(canvasSize.width / viewport.scale) * scale}px`,
-                          height: `${(canvasSize.height / viewport.scale) * scale}px`,
+                          left: `${(img.x - minX) * scale + offsetX}px`,
+                          top: `${(img.y - minY) * scale + offsetY}px`,
+                          width: `${img.width * scale}px`,
+                          height: `${img.height * scale}px`,
                         }}
                       />
-                    </>
-                  );
-                })()}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1 text-center">
-                Mini-map
-              </p>
+                    ))}
+
+                    {/* Viewport indicator */}
+                    <div
+                      className="absolute border-2 border-blue-500 bg-blue-500/10"
+                      style={{
+                        left: `${(-viewport.x / viewport.scale - minX) * scale + offsetX}px`,
+                        top: `${(-viewport.y / viewport.scale - minY) * scale + offsetY}px`,
+                        width: `${(canvasSize.width / viewport.scale) * scale}px`,
+                        height: `${(canvasSize.height / viewport.scale) * scale}px`,
+                      }}
+                    />
+                  </>
+                );
+              })()}
             </div>
-          )}
+            <p className="text-xs text-muted-foreground mt-1 text-center">
+              Mini-map
+            </p>
+          </div>
+
+          {/* {isSaving && (
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-30 bg-background/95 border rounded-md px-3 py-2 flex items-center gap-2 shadow-sm">
+              <SpinnerIcon className="h-4 w-4 animate-spin text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Saving...</span>
+            </div>
+          )} */}
 
           {/* Zoom controls */}
           <div className="absolute bottom-4 right-4 flex-col hidden md:flex items-end gap-2 z-20">
