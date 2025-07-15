@@ -51,34 +51,6 @@ async function downloadImage(url: string): Promise<Buffer> {
 }
 
 export const appRouter = router({
-  uploadImage: publicProcedure
-    .input(
-      z.object({
-        image: z.string(),
-        apiKey: z.string().optional(),
-      })
-    )
-    .mutation(async ({ input, ctx }) => {
-      try {
-        const falClient = await getFalClient(input.apiKey, ctx);
-
-        const response = await fetch(input.image);
-        const blob = await response.blob();
-
-        const uploadResult = await falClient.storage.upload(blob);
-
-        return {
-          url: uploadResult,
-        };
-      } catch (error) {
-        console.error("Error uploading image:", error);
-        // Preserve the original error message if it exists
-        throw new Error(
-          error instanceof Error ? error.message : "Failed to upload image"
-        );
-      }
-    }),
-
   removeBackground: publicProcedure
     .input(
       z.object({

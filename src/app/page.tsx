@@ -84,6 +84,7 @@ import { styleModels } from "@/lib/models";
 import { useToast } from "@/hooks/use-toast";
 import { cva, type VariantProps } from "class-variance-authority";
 import { LogoIcon } from "@/components/icons/logo";
+import { createFalClient } from "@fal-ai/client";
 
 // Keyboard symbol mapping
 const keySymbolMap: Record<string, string> = {
@@ -762,6 +763,16 @@ const CanvasImage: React.FC<{
   );
 };
 
+// Custom hook for FAL client
+const useFalClient = (apiKey?: string) => {
+  return React.useMemo(() => {
+    return createFalClient({
+      credentials: apiKey ?? undefined,
+      proxyUrl: "/api/fal",
+    });
+  }, [apiKey]);
+};
+
 export default function OverlayPage() {
   const [images, setImages] = useState<PlacedImage[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -831,10 +842,39 @@ export default function OverlayPage() {
   } | null>(null);
   const [isTouchingImage, setIsTouchingImage] = useState(false);
 
+  // Create FAL client instance with proxy
+  const falClient = useFalClient(customApiKey);
+
   const trpc = useTRPC();
-  const { mutateAsync: uploadImage } = useMutation(
-    trpc.uploadImage.mutationOptions()
-  );
+
+  // Direct FAL upload function using proxy
+  const uploadImageDirect = async (dataUrl: string) => {
+    // Convert data URL to blob first
+    const response = await fetch(dataUrl);
+    const blob = await response.blob();
+
+    try {
+      // Check size before attempting upload
+      if (blob.size > 10 * 1024 * 1024) {
+        // 10MB warning
+        console.warn(
+          "Large image detected:",
+          (blob.size / 1024 / 1024).toFixed(2) + "MB"
+        );
+      }
+
+      // Upload directly to FAL through proxy (using the client instance)
+      const uploadResult = await falClient.storage.upload(blob);
+
+      return { url: uploadResult };
+    } catch (error) {
+      toast({
+        title: "Failed to upload image",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    }
+  };
 
   const { mutateAsync: removeBackground } = useMutation(
     trpc.removeBackground.mutationOptions()
@@ -1071,13 +1111,20 @@ export default function OverlayPage() {
   // Auto-save to storage when images change (with debounce)
   useEffect(() => {
     if (!isStorageLoaded) return; // Don't save until we've loaded
+    if (activeGenerations.size > 0) return;
 
     const timeoutId = setTimeout(() => {
       saveToStorage();
     }, 1000); // Save after 1 second of no changes
 
     return () => clearTimeout(timeoutId);
-  }, [images, viewport, isStorageLoaded, saveToStorage]);
+  }, [
+    images,
+    viewport,
+    isStorageLoaded,
+    saveToStorage,
+    activeGenerations.size,
+  ]);
 
   // Load default images only if no saved state
   useEffect(() => {
@@ -1151,6 +1198,69 @@ export default function OverlayPage() {
 
     loadDefaultImages();
   }, [isStorageLoaded, images.length]);
+
+  // Helper function to resize image if too large
+  const resizeImageIfNeeded = async (
+    dataUrl: string,
+    maxWidth: number = 2048,
+    maxHeight: number = 2048
+  ): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new window.Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        // Check if resize is needed
+        if (img.width <= maxWidth && img.height <= maxHeight) {
+          resolve(dataUrl);
+          return;
+        }
+
+        // Calculate new dimensions
+        let newWidth = img.width;
+        let newHeight = img.height;
+        const aspectRatio = img.width / img.height;
+
+        if (newWidth > maxWidth) {
+          newWidth = maxWidth;
+          newHeight = newWidth / aspectRatio;
+        }
+        if (newHeight > maxHeight) {
+          newHeight = maxHeight;
+          newWidth = newHeight * aspectRatio;
+        }
+
+        // Create canvas and resize
+        const canvas = document.createElement("canvas");
+        canvas.width = newWidth;
+        canvas.height = newHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("Failed to get canvas context"));
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, newWidth, newHeight);
+
+        // Convert to data URL with compression
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              reject(new Error("Failed to create blob"));
+              return;
+            }
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          },
+          "image/jpeg",
+          0.9 // 90% quality
+        );
+      };
+      img.onerror = () => reject(new Error("Failed to load image"));
+      img.src = dataUrl;
+    });
+  };
 
   // Helper function to create a cropped image
   const createCroppedImage = async (
@@ -1720,10 +1830,7 @@ export default function OverlayPage() {
           reader.readAsDataURL(blob);
         });
 
-        const uploadResult = await uploadImage({
-          image: dataUrl,
-          apiKey: customApiKey || undefined,
-        });
+        const uploadResult = await uploadImageDirect(dataUrl);
 
         // Calculate output size maintaining aspect ratio
         const aspectRatio = canvas.width / canvas.height;
@@ -1739,7 +1846,7 @@ export default function OverlayPage() {
 
         const groupId = `single-${Date.now()}-${Math.random()}`;
         generateImage(
-          uploadResult.url,
+          uploadResult?.url || "",
           img.x + img.width + 20,
           img.y,
           groupId,
@@ -1880,14 +1987,11 @@ export default function OverlayPage() {
         });
 
         // Upload the processed image
-        const uploadResult = await uploadImage({
-          image: dataUrl,
-          apiKey: customApiKey || undefined,
-        });
+        const uploadResult = await uploadImageDirect(dataUrl);
 
         // Remove background using the API
         const result = await removeBackground({
-          imageUrl: uploadResult.url,
+          imageUrl: uploadResult?.url || "",
           apiKey: customApiKey || undefined,
         });
 
@@ -1991,19 +2095,16 @@ export default function OverlayPage() {
       });
 
       // Upload the processed image
-      const uploadResult = await uploadImage({
-        image: dataUrl,
-        apiKey: customApiKey || undefined,
-      });
+      const uploadResult = await uploadImageDirect(dataUrl);
 
       // Isolate object using EVF-SAM2
       console.log("Calling isolateObject with:", {
-        imageUrl: uploadResult.url,
+        imageUrl: uploadResult?.url || "",
         textInput: isolateInputValue,
       });
 
       const result = await isolateObject({
-        imageUrl: uploadResult.url,
+        imageUrl: uploadResult?.url || "",
         textInput: isolateInputValue,
         apiKey: customApiKey || undefined,
       });
@@ -2471,6 +2572,11 @@ export default function OverlayPage() {
               return newMap;
             });
             setIsGenerating(false);
+
+            // Immediately save after generation completes
+            setTimeout(() => {
+              saveToStorage();
+            }, 100); // Small delay to ensure state updates are processed
           }}
           onError={(id, error) => {
             console.error(`Generation error for ${id}:`, error);

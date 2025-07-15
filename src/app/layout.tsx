@@ -54,8 +54,10 @@ export const metadata: Metadata = {
     images: [
       {
         url: "/og.png",
+        width: 1200,
+        height: 630,
         alt: "Flux Kontext Dev - AI Style Transfer Demo",
-        type: "image/jpeg",
+        type: "image/png",
       },
     ],
   },
@@ -68,7 +70,7 @@ export const metadata: Metadata = {
     site: "@fal_ai",
     images: [
       {
-        url: "/og-image.jpeg",
+        url: "/og.png",
         alt: "Flux Kontext Dev - AI Style Transfer Demo",
       },
     ],
