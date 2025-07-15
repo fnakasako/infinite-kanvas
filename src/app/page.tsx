@@ -2972,6 +2972,17 @@ export default function OverlayPage() {
           <div className="fixed bottom-0 left-0 right-0 md:absolute md:bottom-4 md:left-1/2 md:transform md:-translate-x-1/2 z-20 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] md:p-0 md:pb-0 md:max-w-[600px]">
             <div className="bg-card/95 backdrop-blur-sm border border-border rounded shadow">
               <div className="flex flex-col gap-3 px-3 md:px-6 py-2 md:py-3 relative">
+                {/* Active generations indicator */}
+                {activeGenerations.size > 0 && (
+                  <div className="absolute -top-12 left-1/2 transform -translate-x-1/2 bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 px-3 py-1 rounded text-sm font-medium flex items-center gap-2 ">
+                    <div className="w-2 h-2 bg-yellow-500 rounded-full animate-ping" />
+                    <span>
+                      Generating {activeGenerations.size} image
+                      {activeGenerations.size > 1 ? "s" : ""}
+                    </span>
+                  </div>
+                )}
+
                 {/* Action buttons row */}
                 <div className="flex items-center gap-1">
                   <Button
