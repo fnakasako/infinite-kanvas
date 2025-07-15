@@ -37,9 +37,7 @@ export const metadata: Metadata = {
     address: false,
     telephone: false,
   },
-  metadataBase: new URL(
-    process.env.NEXT_PUBLIC_APP_URL || "https://flux-kontext-demo.vercel.app"
-  ),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL!),
   alternates: {
     canonical: "/",
   },
@@ -53,7 +51,7 @@ export const metadata: Metadata = {
     siteName: "Flux Kontext Dev",
     images: [
       {
-        url: "/og-img.png",
+        url: "/og-img-compress.png",
         width: 1200,
         height: 630,
         alt: "Flux Kontext Dev - AI Style Transfer Demo",
@@ -70,8 +68,11 @@ export const metadata: Metadata = {
     site: "@fal_ai",
     images: [
       {
-        url: "/og.png",
+        url: "/og-img-compress.png",
+        width: 1200,
+        height: 630,
         alt: "Flux Kontext Dev - AI Style Transfer Demo",
+        type: "image/png",
       },
     ],
   },
@@ -111,6 +112,10 @@ export default function RootLayout({
           protect={[
             {
               path: "/api/trpc/*",
+              method: "POST",
+            },
+            {
+              path: "/api/fal",
               method: "POST",
             },
           ]}

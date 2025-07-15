@@ -1156,6 +1156,7 @@ export default function OverlayPage() {
       const defaultImagePaths = [
         "/hat.png",
         "/man.png",
+        "/og-img-compress.png",
         "/chad.png",
         "/anime.png",
         "/cat.jpg",
@@ -2588,6 +2589,9 @@ export default function OverlayPage() {
       className="bg-background text-foreground font-focal relative flex flex-col w-full overflow-hidden h-screen"
       style={{ height: "100dvh" }}
       onDrop={handleDrop}
+      onDragOver={(e) => e.preventDefault()}
+      onDragEnter={(e) => e.preventDefault()}
+      onDragLeave={(e) => e.preventDefault()}
     >
       {/* Render streaming components for active generations */}
       {Array.from(activeGenerations.entries()).map(([imageId, generation]) => (
