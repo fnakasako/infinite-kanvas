@@ -1644,7 +1644,7 @@ export default function OverlayPage() {
       ...prev,
       {
         id: placeholderId,
-        src: imageUrl, // Temporary, will be replaced by streaming
+        src: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
         x,
         y,
         width,
