@@ -2,33 +2,16 @@
 
 import React from "react";
 import { useState, useCallback } from "react";
-import {
-  Stage,
-  Layer,
-  Image as KonvaImage,
-  Transformer,
-  Rect,
-  Group,
-  Text,
-  Line,
-} from "react-konva";
+import { Stage, Layer, Rect, Group, Line } from "react-konva";
 import Konva from "konva";
-import {
-  canvasStorage,
-  type CanvasState,
-  type CanvasElement,
-  type ImageTransform,
-} from "@/lib/storage";
+import { canvasStorage, type CanvasState } from "@/lib/storage";
 
 import { Button } from "@/components/ui/button";
 import {
   Play,
   X,
   Copy,
-  Settings,
-  ArrowLeft,
   ChevronDown,
-  Layers,
   Download,
   Crop,
   Check,
@@ -51,10 +34,7 @@ import { cn } from "@/lib/utils";
 import { Logo, SpinnerIcon } from "@/components/icons";
 import { useTRPC } from "@/trpc/client";
 import { useMutation } from "@tanstack/react-query";
-import { useSubscription } from "@trpc/tanstack-react-query";
-import { LoadingAnimation } from "@/components/ui/loading-animation";
-import useImage from "use-image";
-import { useRef, useEffect, useState as useStateReact } from "react";
+import { useRef, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -68,12 +48,6 @@ import {
   ContextMenuSubContent,
 } from "@/components/ui/context-menu";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -82,686 +56,26 @@ import {
 } from "@/components/ui/dialog";
 import { styleModels } from "@/lib/models";
 import { useToast } from "@/hooks/use-toast";
-import { cva, type VariantProps } from "class-variance-authority";
 import { LogoIcon } from "@/components/icons/logo";
 import { createFalClient } from "@fal-ai/client";
 
-// Keyboard symbol mapping
-const keySymbolMap: Record<string, string> = {
-  up: "↑",
-  down: "↓",
-  left: "←",
-  right: "→",
-  enter: "↵",
-  esc: "esc",
-  delete: "⌫",
-  meta: "⌘",
-  ctrl: "⌃",
-  shift: "⇧",
-};
+// Import extracted components
+import { ShortcutBadge } from "@/components/canvas/ShortcutBadge";
+import { StreamingImage } from "@/components/canvas/StreamingImage";
+import { CropOverlayWrapper } from "@/components/canvas/CropOverlayWrapper";
+import { CanvasImage } from "@/components/canvas/CanvasImage";
 
-// ShortcutBadge styling variants
-const shortcutBadgeVariants = cva(
-  [
-    "flex items-center justify-center tracking-tighter",
-    "rounded border px-1 font-mono",
-  ],
-  {
-    variants: {
-      variant: {
-        default: "border-border",
-        alpha: "bg-white/10 border-white/10",
-      },
-      size: {
-        xs: "h-6 min-w-6 text-xs",
-        sm: "h-7 min-w-7 text-sm",
-        md: "h-8 min-w-8 text-md",
-        lg: "h-9 min-w-9 text-lg",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-      size: "sm",
-    },
-  }
-);
+// Import types
+import type {
+  PlacedImage,
+  HistoryState,
+  GenerationSettings,
+  ActiveGeneration,
+  SelectionBox,
+} from "@/types/canvas";
 
-type BaseShortcutBadgeProps = {
-  shortcut: string;
-};
-
-interface ShortcutBadgeProps
-  extends React.HTMLAttributes<HTMLDivElement>,
-    BaseShortcutBadgeProps,
-    VariantProps<typeof shortcutBadgeVariants> {}
-
-function ShortcutBadge({
-  className,
-  variant,
-  size,
-  shortcut,
-}: ShortcutBadgeProps) {
-  const keys = shortcut
-    .split("+")
-    .map((key) => keySymbolMap[key.trim()] ?? key.trim());
-  return (
-    <span className="flex flex-row space-x-0.5">
-      {keys.map((key, index) => (
-        <kbd
-          key={index}
-          className={shortcutBadgeVariants({ variant, size, className })}
-        >
-          {key}
-        </kbd>
-      ))}
-    </span>
-  );
-}
-
-interface PlacedImage {
-  id: string;
-  src: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rotation: number;
-  isGenerated?: boolean;
-  parentGroupId?: string;
-  cropX?: number;
-  cropY?: number;
-  cropWidth?: number;
-  cropHeight?: number;
-}
-
-interface HistoryState {
-  images: PlacedImage[];
-  selectedIds: string[];
-}
-
-interface GenerationSettings {
-  prompt: string;
-  loraUrl: string;
-  styleId?: string;
-}
-
-interface ActiveGeneration {
-  imageUrl: string;
-  prompt: string;
-  loraUrl?: string;
-}
-
-interface SelectionBox {
-  startX: number;
-  startY: number;
-  endX: number;
-  endY: number;
-  visible: boolean;
-}
-
-// Helper to convert PlacedImage to storage format
-const imageToCanvasElement = (image: PlacedImage): CanvasElement => ({
-  id: image.id,
-  type: "image",
-  imageId: image.id, // We'll use the same ID for both
-  transform: {
-    x: image.x,
-    y: image.y,
-    scale: 1, // We store width/height separately, so scale is 1
-    rotation: image.rotation,
-    ...(image.cropX !== undefined && {
-      cropBox: {
-        x: image.cropX,
-        y: image.cropY || 0,
-        width: image.cropWidth || 1,
-        height: image.cropHeight || 1,
-      },
-    }),
-  },
-  zIndex: 0, // We'll use array order instead
-  width: image.width,
-  height: image.height,
-});
-
-// Component for handling streaming generation
-const StreamingImage: React.FC<{
-  imageId: string;
-  generation: ActiveGeneration;
-  onComplete: (imageId: string, finalUrl: string) => void;
-  onError: (imageId: string, error: string) => void;
-  onStreamingUpdate: (imageId: string, url: string) => void;
-  apiKey?: string;
-}> = ({
-  imageId,
-  generation,
-  onComplete,
-  onError,
-  onStreamingUpdate,
-  apiKey,
-}) => {
-  const subscription = useSubscription(
-    useTRPC().generateImageStream.subscriptionOptions(
-      {
-        imageUrl: generation.imageUrl,
-        prompt: generation.prompt,
-        ...(generation.loraUrl ? { loraUrl: generation.loraUrl } : {}),
-        ...(apiKey ? { apiKey } : {}),
-      },
-      {
-        enabled: true,
-        onData: (data: any) => {
-          const eventData = data.data;
-
-          if (eventData.type === "progress") {
-            const event = eventData.data;
-            if (event.images && event.images.length > 0) {
-              onStreamingUpdate(imageId, event.images[0].url);
-            }
-          } else if (eventData.type === "complete") {
-            onComplete(imageId, eventData.imageUrl);
-          } else if (eventData.type === "error") {
-            onError(imageId, eventData.error);
-          }
-        },
-        onError: (error) => {
-          console.error("Subscription error:", error);
-          onError(imageId, error.message || "Generation failed");
-        },
-      }
-    )
-  );
-
-  return null;
-};
-
-// Crop overlay component
-const CropOverlay: React.FC<{
-  image: PlacedImage;
-  imageElement: HTMLImageElement;
-  onCropChange: (crop: {
-    cropX: number;
-    cropY: number;
-    cropWidth: number;
-    cropHeight: number;
-  }) => void;
-  onCropEnd: () => void;
-}> = ({ image, imageElement, onCropChange, onCropEnd }) => {
-  const cropRectRef = useRef<Konva.Rect>(null);
-  const cropTransformerRef = useRef<Konva.Transformer>(null);
-  const [grid, setGrid] = useState<Array<{ points: number[] }>>([]);
-  const [isHoveringDone, setIsHoveringDone] = useState(false);
-
-  // Initialize crop values (default to full image if not set)
-  const cropX = (image.cropX ?? 0) * image.width;
-  const cropY = (image.cropY ?? 0) * image.height;
-  const cropWidth = (image.cropWidth ?? 1) * image.width;
-  const cropHeight = (image.cropHeight ?? 1) * image.height;
-
-  React.useEffect(() => {
-    if (cropRectRef.current && cropTransformerRef.current) {
-      cropTransformerRef.current.nodes([cropRectRef.current]);
-      cropTransformerRef.current.getLayer()?.batchDraw();
-    }
-  }, []);
-
-  // Update grid lines
-  const updateGrid = (width: number, height: number) => {
-    const newGrid: Array<{ points: number[] }> = [];
-    const stepX = width / 3;
-    const stepY = height / 3;
-
-    for (let i = 1; i <= 2; i++) {
-      // Vertical lines
-      newGrid.push({ points: [stepX * i, 0, stepX * i, height] });
-      // Horizontal lines
-      newGrid.push({ points: [0, stepY * i, width, stepY * i] });
-    }
-
-    setGrid(newGrid);
-  };
-
-  React.useEffect(() => {
-    updateGrid(cropWidth, cropHeight);
-  }, [cropWidth, cropHeight]);
-
-  const handleTransform = () => {
-    const node = cropRectRef.current;
-    if (!node) return;
-
-    const scaleX = node.scaleX();
-    const scaleY = node.scaleY();
-
-    // Reset scale
-    node.scaleX(1);
-    node.scaleY(1);
-
-    let newX = node.x();
-    let newY = node.y();
-    let newWidth = Math.max(20, node.width() * scaleX);
-    let newHeight = Math.max(20, node.height() * scaleY);
-
-    // Constrain to image bounds
-    if (newX < 0) newX = 0;
-    if (newY < 0) newY = 0;
-    if (newX + newWidth > image.width) {
-      newWidth = image.width - newX;
-    }
-    if (newY + newHeight > image.height) {
-      newHeight = image.height - newY;
-    }
-
-    node.setAttrs({
-      x: newX,
-      y: newY,
-      width: newWidth,
-      height: newHeight,
-    });
-
-    updateGrid(newWidth, newHeight);
-
-    onCropChange({
-      cropX: newX / image.width,
-      cropY: newY / image.height,
-      cropWidth: newWidth / image.width,
-      cropHeight: newHeight / image.height,
-    });
-  };
-
-  const handleDragMove = (e: Konva.KonvaEventObject<DragEvent>) => {
-    const node = e.target;
-    let newX = node.x();
-    let newY = node.y();
-
-    // Constrain to image bounds
-    if (newX < 0) newX = 0;
-    if (newY < 0) newY = 0;
-    if (newX + node.width() > image.width) {
-      newX = image.width - node.width();
-    }
-    if (newY + node.height() > image.height) {
-      newY = image.height - node.height();
-    }
-
-    node.setAttrs({
-      x: newX,
-      y: newY,
-    });
-  };
-
-  const handleDragEnd = () => {
-    const node = cropRectRef.current;
-    if (!node) return;
-
-    onCropChange({
-      cropX: node.x() / image.width,
-      cropY: node.y() / image.height,
-      cropWidth: node.width() / image.width,
-      cropHeight: node.height() / image.height,
-    });
-  };
-
-  return (
-    <Group x={image.x} y={image.y} name="crop-overlay">
-      {/* Semi-transparent mask */}
-      <Rect
-        width={image.width}
-        height={image.height}
-        fill="black"
-        opacity={0.5}
-        listening={false}
-      />
-
-      {/* Clipped image (visible crop area) */}
-      <Group
-        clip={{
-          x: cropX,
-          y: cropY,
-          width: cropWidth,
-          height: cropHeight,
-        }}
-      >
-        <KonvaImage
-          image={imageElement}
-          width={image.width}
-          height={image.height}
-        />
-      </Group>
-
-      {/* Grid lines */}
-      <Group x={cropX} y={cropY}>
-        {grid.map((line, index) => (
-          <Line
-            key={index}
-            points={line.points}
-            stroke="white"
-            strokeWidth={1}
-            opacity={0.5}
-          />
-        ))}
-      </Group>
-
-      {/* Crop rectangle */}
-      <Rect
-        ref={cropRectRef}
-        x={cropX}
-        y={cropY}
-        width={cropWidth}
-        height={cropHeight}
-        stroke="#3b82f6"
-        strokeWidth={2}
-        draggable
-        onDragMove={handleDragMove}
-        onDragEnd={handleDragEnd}
-        onTransformEnd={handleTransform}
-      />
-
-      {/* Transformer */}
-      <Transformer
-        ref={cropTransformerRef}
-        boundBoxFunc={(oldBox, newBox) => {
-          // Limit minimum size
-          if (newBox.width < 20 || newBox.height < 20) {
-            return oldBox;
-          }
-          return newBox;
-        }}
-        enabledAnchors={[
-          "top-left",
-          "top-center",
-          "top-right",
-          "middle-left",
-          "middle-right",
-          "bottom-left",
-          "bottom-center",
-          "bottom-right",
-        ]}
-        rotateEnabled={false}
-        flipEnabled={false}
-      />
-
-      {/* Done button - styled to match our button component */}
-      <Group
-        x={cropX + cropWidth - 70}
-        y={cropY - 45}
-        onMouseEnter={() => setIsHoveringDone(true)}
-        onMouseLeave={() => setIsHoveringDone(false)}
-        onClick={onCropEnd}
-        onTap={onCropEnd}
-      >
-        <Rect
-          width={70}
-          height={36}
-          fill={isHoveringDone ? "#2563eb" : "#3b82f6"}
-          cornerRadius={6}
-          shadowColor="black"
-          shadowBlur={8}
-          shadowOpacity={0.15}
-          shadowOffsetY={2}
-        />
-        <Text
-          text="Done"
-          fontSize={14}
-          fontFamily="system-ui, -apple-system, sans-serif"
-          fontStyle="500"
-          fill="white"
-          width={70}
-          height={36}
-          align="center"
-          verticalAlign="middle"
-          listening={false}
-        />
-      </Group>
-    </Group>
-  );
-};
-
-// Custom hook for streaming images that prevents flickering
-const useStreamingImage = (src: string) => {
-  const [currentImage, setCurrentImage] = useState<
-    HTMLImageElement | undefined
-  >(undefined);
-  const [isLoading, setIsLoading] = useState(false);
-  const loadingRef = useRef<{ src: string; img: HTMLImageElement } | null>(
-    null
-  );
-
-  useEffect(() => {
-    if (!src) {
-      setCurrentImage(undefined);
-      return;
-    }
-
-    // If we already have this image loaded, don't reload it
-    if (currentImage && currentImage.src === src) {
-      return;
-    }
-
-    // If we're already loading this exact URL, don't start another load
-    if (loadingRef.current && loadingRef.current.src === src) {
-      return;
-    }
-
-    setIsLoading(true);
-    const img = new window.Image();
-    img.crossOrigin = "anonymous";
-
-    loadingRef.current = { src, img };
-
-    img.onload = () => {
-      // Only update if this is still the image we want to load
-      if (loadingRef.current && loadingRef.current.src === src) {
-        setCurrentImage(img);
-        setIsLoading(false);
-        loadingRef.current = null;
-      }
-    };
-
-    img.onerror = () => {
-      if (loadingRef.current && loadingRef.current.src === src) {
-        setIsLoading(false);
-        loadingRef.current = null;
-      }
-    };
-
-    img.src = src;
-
-    return () => {
-      // Clean up if component unmounts or src changes before load completes
-      if (loadingRef.current && loadingRef.current.src === src) {
-        loadingRef.current = null;
-      }
-    };
-  }, [src]);
-
-  return [currentImage, isLoading] as const;
-};
-
-// Wrapper component to handle image loading for crop overlay
-const CropOverlayWrapper: React.FC<{
-  image: PlacedImage;
-  onCropChange: (crop: {
-    cropX: number;
-    cropY: number;
-    cropWidth: number;
-    cropHeight: number;
-  }) => void;
-  onCropEnd: () => void;
-}> = ({ image, onCropChange, onCropEnd }) => {
-  const [img] = useImage(image.src, "anonymous");
-
-  if (!img) return null;
-
-  return (
-    <CropOverlay
-      image={image}
-      imageElement={img}
-      onCropChange={onCropChange}
-      onCropEnd={onCropEnd}
-    />
-  );
-};
-
-// Component for rendering individual images on the canvas
-const CanvasImage: React.FC<{
-  image: PlacedImage;
-  isSelected: boolean;
-  onSelect: (e: any) => void;
-  onChange: (newAttrs: Partial<PlacedImage>) => void;
-  onDragStart: () => void;
-  onDragEnd: () => void;
-  onDoubleClick?: () => void;
-  selectedIds: string[];
-  images: PlacedImage[];
-  setImages: React.Dispatch<React.SetStateAction<PlacedImage[]>>;
-  isDraggingImage: boolean;
-  dragStartPositions: Map<string, { x: number; y: number }>;
-}> = ({
-  image,
-  isSelected,
-  onSelect,
-  onChange,
-  onDragStart,
-  onDragEnd,
-  onDoubleClick,
-  selectedIds,
-  images,
-  setImages,
-  isDraggingImage,
-  dragStartPositions,
-}) => {
-  const shapeRef = useRef<Konva.Image>(null);
-  const trRef = useRef<Konva.Transformer>(null);
-  // Use streaming image hook for generated images to prevent flicker
-  const [streamingImg] = useStreamingImage(image.isGenerated ? image.src : "");
-  const [normalImg] = useImage(image.isGenerated ? "" : image.src, "anonymous");
-  const img = image.isGenerated ? streamingImg : normalImg;
-  const [isHovered, setIsHovered] = useState(false);
-
-  React.useEffect(() => {
-    if (isSelected && trRef.current && shapeRef.current) {
-      // Only show transformer if this is the only selected item or if clicking on it
-      if (selectedIds.length === 1) {
-        trRef.current.nodes([shapeRef.current]);
-        trRef.current.getLayer()?.batchDraw();
-      } else {
-        trRef.current.nodes([]);
-      }
-    }
-  }, [isSelected, selectedIds.length]);
-
-  return (
-    <>
-      <KonvaImage
-        ref={shapeRef}
-        image={img}
-        x={image.x}
-        y={image.y}
-        width={image.width}
-        height={image.height}
-        rotation={image.rotation}
-        crop={
-          image.cropX !== undefined
-            ? {
-                x: (image.cropX || 0) * (img?.naturalWidth || 0),
-                y: (image.cropY || 0) * (img?.naturalHeight || 0),
-                width: (image.cropWidth || 1) * (img?.naturalWidth || 0),
-                height: (image.cropHeight || 1) * (img?.naturalHeight || 0),
-              }
-            : undefined
-        }
-        draggable
-        onClick={onSelect}
-        onTap={onSelect}
-        onDblClick={onDoubleClick}
-        onDblTap={onDoubleClick}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-        onDragStart={(e) => {
-          // Stop propagation to prevent stage from being dragged
-          e.cancelBubble = true;
-          // Auto-select on drag if not already selected
-          if (!isSelected) {
-            onSelect(e);
-          }
-          onDragStart();
-        }}
-        onDragMove={(e) => {
-          const node = e.target;
-
-          if (selectedIds.includes(image.id) && selectedIds.length > 1) {
-            // Calculate delta from drag start position
-            const startPos = dragStartPositions.get(image.id);
-            if (startPos) {
-              const deltaX = node.x() - startPos.x;
-              const deltaY = node.y() - startPos.y;
-
-              // Update all selected items relative to their start positions
-              setImages((prev) =>
-                prev.map((img) => {
-                  if (img.id === image.id) {
-                    return { ...img, x: node.x(), y: node.y() };
-                  } else if (selectedIds.includes(img.id)) {
-                    const imgStartPos = dragStartPositions.get(img.id);
-                    if (imgStartPos) {
-                      return {
-                        ...img,
-                        x: imgStartPos.x + deltaX,
-                        y: imgStartPos.y + deltaY,
-                      };
-                    }
-                  }
-                  return img;
-                })
-              );
-            }
-          } else {
-            // Single item drag - just update this image
-            onChange({
-              x: node.x(),
-              y: node.y(),
-            });
-          }
-        }}
-        onDragEnd={(e) => {
-          onDragEnd();
-        }}
-        onTransformEnd={(e) => {
-          const node = shapeRef.current;
-          if (node) {
-            const scaleX = node.scaleX();
-            const scaleY = node.scaleY();
-
-            node.scaleX(1);
-            node.scaleY(1);
-
-            onChange({
-              x: node.x(),
-              y: node.y(),
-              width: Math.max(5, node.width() * scaleX),
-              height: Math.max(5, node.height() * scaleY),
-              rotation: node.rotation(),
-            });
-          }
-          onDragEnd();
-        }}
-        opacity={image.isGenerated ? 0.9 : 1}
-        stroke={isSelected ? "#3b82f6" : isHovered ? "#3b82f6" : "transparent"}
-        strokeWidth={isSelected || isHovered ? 2 : 0}
-      />
-      {isSelected && selectedIds.length === 1 && (
-        <Transformer
-          ref={trRef}
-          boundBoxFunc={(oldBox, newBox) => {
-            if (newBox.width < 5 || newBox.height < 5) {
-              return oldBox;
-            }
-            return newBox;
-          }}
-        />
-      )}
-    </>
-  );
-};
+import { imageToCanvasElement } from "@/utils/canvas-utils";
+import { checkOS } from "@/utils/os-utils";
 
 // Custom hook for FAL client
 const useFalClient = (apiKey?: string) => {
@@ -809,20 +123,13 @@ export default function OverlayPage() {
     height: typeof window !== "undefined" ? window.innerHeight : 800,
   });
   const [isCanvasReady, setIsCanvasReady] = useState(false);
-  const [isDesktop, setIsDesktop] = useState(true);
   const [croppingImageId, setCroppingImageId] = useState<string | null>(null);
   const [viewport, setViewport] = useState({
     x: 0,
     y: 0,
     scale: 1,
   });
-  const [isDraggingStage, setIsDraggingStage] = useState(false);
   const stageRef = useRef<Konva.Stage>(null);
-  const settingsRef = useRef<HTMLDivElement>(null);
-  const [contextMenuPosition, setContextMenuPosition] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
   const [isolateTarget, setIsolateTarget] = useState<string | null>(null);
   const [isolateInputValue, setIsolateInputValue] = useState("");
   const [isIsolating, setIsIsolating] = useState(false);
@@ -830,7 +137,7 @@ export default function OverlayPage() {
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false);
   const [customApiKey, setCustomApiKey] = useState<string>("");
   const [tempApiKey, setTempApiKey] = useState<string>("");
-  const [isSaving, setIsSaving] = useState(false);
+  const [_, setIsSaving] = useState(false);
 
   // Touch event states for mobile
   const [lastTouchDistance, setLastTouchDistance] = useState<number | null>(
@@ -1003,18 +310,6 @@ export default function OverlayPage() {
     }
   }, [toast]);
 
-  // Check OS for keyboard shortcut display
-  const checkOS = (os?: string) => {
-    if (typeof window === "undefined" || typeof navigator === "undefined") {
-      return false;
-    }
-    const platform = navigator.platform;
-    if (os === "Win") return platform.startsWith("Win");
-    if (os === "Linux") return platform.startsWith("Linux");
-    if (os === "Mac") return platform.startsWith("Mac");
-    return false;
-  };
-
   // Load API key from localStorage on mount
   useEffect(() => {
     const savedKey = localStorage.getItem("fal-api-key");
@@ -1108,20 +403,6 @@ export default function OverlayPage() {
       document.body.style.width = "";
       document.body.style.height = "";
     };
-  }, []);
-
-  // Check if screen is desktop-sized
-  useEffect(() => {
-    const checkScreenSize = () => {
-      setIsDesktop(window.innerWidth >= 1250);
-    };
-
-    // Check on mount
-    checkScreenSize();
-
-    // Check on resize
-    window.addEventListener("resize", checkScreenSize);
-    return () => window.removeEventListener("resize", checkScreenSize);
   }, []);
 
   // Load from storage on mount
@@ -2691,9 +1972,6 @@ export default function OverlayPage() {
 
                       const point = stage.getPointerPosition();
                       if (!point) return;
-
-                      // Save the context menu position
-                      setContextMenuPosition(point);
 
                       // Convert to canvas coordinates
                       const canvasPoint = {
