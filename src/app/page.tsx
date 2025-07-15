@@ -2294,6 +2294,7 @@ export default function OverlayPage() {
                         placeholder="e.g. car, face, person"
                         value={isolateInputValue}
                         onChange={(e) => setIsolateInputValue(e.target.value)}
+                        style={{ fontSize: "16px" }}
                         onKeyDown={(e) => {
                           if (
                             e.key === "Enter" &&
@@ -2614,6 +2615,7 @@ export default function OverlayPage() {
                     }
                     placeholder={`Enter a prompt... (${checkOS("Win") || checkOS("Linux") ? "Ctrl" : "⌘"}+Enter to run)`}
                     className="w-full h-20 resize-none bg-background/50 pr-36"
+                    style={{ fontSize: "16px" }}
                     onKeyDown={(e) => {
                       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                         e.preventDefault();
@@ -2697,6 +2699,7 @@ export default function OverlayPage() {
                     }
                     placeholder="Kontext LoRA URL (optional)"
                     className="w-full bg-background/50"
+                    style={{ fontSize: "16px" }}
                   />
                 )}
 
@@ -2901,6 +2904,7 @@ export default function OverlayPage() {
                 value={tempApiKey}
                 onChange={(e) => setTempApiKey(e.target.value)}
                 className="font-mono"
+                style={{ fontSize: "16px" }}
               />
               <p className="text-xs text-muted-foreground">
                 Get your API key from{" "}
