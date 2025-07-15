@@ -1,6 +1,6 @@
 # Infinite Kanvas - AI Image Editor Infinite Canvas (Powered by Flux Kontext Dev)
 
-![Infinite Kanvas](./public/og-img-compressed.png)
+![Infinite Kanvas](./public/og-img-compress.png)
 
 An interactive canvas application that leverages fal.ai's powerful AI models for real-time image manipulation and style transfer. Built with Next.js, React Konva, and tRPC.
 
