@@ -3,6 +3,7 @@ import "./globals.css";
 import { CoreProviders } from "./core-providers";
 import { focal, hal, halMono, commitMono, inconsolata } from "@/lib/fonts";
 import { BotIdClient } from "botid/client";
+import { Analytics } from "@vercel/analytics/next";
 
 export const metadata: Metadata = {
   title: {
@@ -124,6 +125,7 @@ export default function RootLayout({
       <body className={`font-sans bg-background text-foreground min-h-screen`}>
         <CoreProviders>{children}</CoreProviders>
       </body>
+      <Analytics />
     </html>
   );
 }
