@@ -867,12 +867,33 @@ export default function OverlayPage() {
       const uploadResult = await falClient.storage.upload(blob);
 
       return { url: uploadResult };
-    } catch (error) {
-      toast({
-        title: "Failed to upload image",
-        description: error instanceof Error ? error.message : "Unknown error",
-        variant: "destructive",
-      });
+    } catch (error: any) {
+      // Check for rate limit error
+      const isRateLimit =
+        error.status === 429 ||
+        error.message?.includes("429") ||
+        error.message?.includes("rate limit") ||
+        error.message?.includes("Rate limit");
+
+      if (isRateLimit) {
+        toast({
+          title: "Rate limit exceeded",
+          description:
+            "Add your FAL API key to bypass rate limits. Without an API key, uploads are limited.",
+          variant: "destructive",
+        });
+        // Open API key dialog automatically
+        setIsApiKeyDialogOpen(true);
+      } else {
+        toast({
+          title: "Failed to upload image",
+          description: error instanceof Error ? error.message : "Unknown error",
+          variant: "destructive",
+        });
+      }
+
+      // Re-throw the error so calling code knows upload failed
+      throw error;
     }
   };
 
@@ -1768,6 +1789,9 @@ export default function OverlayPage() {
     }
 
     // Process each selected image individually for image-to-image
+    let successCount = 0;
+    let failureCount = 0;
+
     for (const img of selectedImages) {
       try {
         // Get crop values
@@ -1830,7 +1854,22 @@ export default function OverlayPage() {
           reader.readAsDataURL(blob);
         });
 
-        const uploadResult = await uploadImageDirect(dataUrl);
+        let uploadResult;
+        try {
+          uploadResult = await uploadImageDirect(dataUrl);
+        } catch (uploadError) {
+          console.error("Failed to upload image:", uploadError);
+          failureCount++;
+          // Skip this image if upload fails
+          continue;
+        }
+
+        // Only proceed with generation if upload succeeded
+        if (!uploadResult?.url) {
+          console.error("Upload succeeded but no URL returned");
+          failureCount++;
+          continue;
+        }
 
         // Calculate output size maintaining aspect ratio
         const aspectRatio = canvas.width / canvas.height;
@@ -1846,15 +1885,17 @@ export default function OverlayPage() {
 
         const groupId = `single-${Date.now()}-${Math.random()}`;
         generateImage(
-          uploadResult?.url || "",
+          uploadResult.url,
           img.x + img.width + 20,
           img.y,
           groupId,
           outputWidth,
           outputHeight
         );
+        successCount++;
       } catch (error) {
         console.error("Error processing image:", error);
+        failureCount++;
         toast({
           title: "Failed to process image",
           description:
