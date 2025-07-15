@@ -53,7 +53,7 @@ export const metadata: Metadata = {
     siteName: "Flux Kontext Dev",
     images: [
       {
-        url: "/og.png",
+        url: "/og-img.png",
         width: 1200,
         height: 630,
         alt: "Flux Kontext Dev - AI Style Transfer Demo",
