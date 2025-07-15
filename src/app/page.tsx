@@ -77,15 +77,12 @@ import type {
 import { imageToCanvasElement } from "@/utils/canvas-utils";
 import { checkOS } from "@/utils/os-utils";
 
-// Custom hook for FAL client
-const useFalClient = (apiKey?: string) => {
-  return React.useMemo(() => {
-    return createFalClient({
-      credentials: apiKey ?? undefined,
-      proxyUrl: "/api/fal",
-    });
-  }, [apiKey]);
-};
+// Import additional extracted components
+import { useFalClient } from "@/hooks/useFalClient";
+import { CanvasGrid } from "@/components/canvas/CanvasGrid";
+import { SelectionBoxComponent } from "@/components/canvas/SelectionBox";
+import { MiniMap } from "@/components/canvas/MiniMap";
+import { ZoomControls } from "@/components/canvas/ZoomControls";
 
 export default function OverlayPage() {
   const [images, setImages] = useState<PlacedImage[]>([]);
@@ -123,6 +120,8 @@ export default function OverlayPage() {
     height: typeof window !== "undefined" ? window.innerHeight : 800,
   });
   const [isCanvasReady, setIsCanvasReady] = useState(false);
+  const [isPanningCanvas, setIsPanningCanvas] = useState(false);
+  const [lastPanPosition, setLastPanPosition] = useState({ x: 0, y: 0 });
   const [croppingImageId, setCroppingImageId] = useState<string | null>(null);
   const [viewport, setViewport] = useState({
     x: 0,
@@ -899,6 +898,15 @@ export default function OverlayPage() {
   const handleMouseDown = (e: any) => {
     const clickedOnEmpty = e.target === e.target.getStage();
     const stage = e.target.getStage();
+    const mouseButton = e.evt.button; // 0 = left, 1 = middle, 2 = right
+
+    // If middle mouse button, start panning
+    if (mouseButton === 1) {
+      e.evt.preventDefault();
+      setIsPanningCanvas(true);
+      setLastPanPosition({ x: e.evt.clientX, y: e.evt.clientY });
+      return;
+    }
 
     // If in crop mode and clicked outside, exit crop mode
     if (croppingImageId) {
@@ -913,8 +921,8 @@ export default function OverlayPage() {
       }
     }
 
-    // Start selection box when clicking on empty space
-    if (clickedOnEmpty && !croppingImageId) {
+    // Start selection box when left-clicking on empty space
+    if (clickedOnEmpty && !croppingImageId && mouseButton === 0) {
       const pos = stage.getPointerPosition();
       if (pos) {
         // Convert screen coordinates to canvas coordinates
@@ -939,6 +947,21 @@ export default function OverlayPage() {
   const handleMouseMove = (e: any) => {
     const stage = e.target.getStage();
 
+    // Handle canvas panning with middle mouse
+    if (isPanningCanvas) {
+      const deltaX = e.evt.clientX - lastPanPosition.x;
+      const deltaY = e.evt.clientY - lastPanPosition.y;
+
+      setViewport((prev) => ({
+        ...prev,
+        x: prev.x + deltaX,
+        y: prev.y + deltaY,
+      }));
+
+      setLastPanPosition({ x: e.evt.clientX, y: e.evt.clientY });
+      return;
+    }
+
     // Handle selection
     if (!isSelecting) return;
 
@@ -959,6 +982,12 @@ export default function OverlayPage() {
   };
 
   const handleMouseUp = (e: any) => {
+    // Stop canvas panning
+    if (isPanningCanvas) {
+      setIsPanningCanvas(false);
+      return;
+    }
+
     if (!isSelecting) return;
 
     // Calculate which images are in the selection box
@@ -1941,6 +1970,7 @@ export default function OverlayPage() {
                 style={{
                   minHeight: `${canvasSize.height}px`,
                   minWidth: `${canvasSize.width}px`,
+                  cursor: isPanningCanvas ? "grabbing" : "default",
                 }}
               >
                 {isCanvasReady && (
@@ -1962,6 +1992,12 @@ export default function OverlayPage() {
                     onMouseDown={handleMouseDown}
                     onMousemove={handleMouseMove}
                     onMouseup={handleMouseUp}
+                    onMouseLeave={() => {
+                      // Stop panning if mouse leaves the stage
+                      if (isPanningCanvas) {
+                        setIsPanningCanvas(false);
+                      }
+                    }}
                     onTouchStart={handleTouchStart}
                     onTouchMove={handleTouchMove}
                     onTouchEnd={handleTouchEnd}
@@ -2003,79 +2039,10 @@ export default function OverlayPage() {
                   >
                     <Layer>
                       {/* Grid background */}
-                      <Group>
-                        {(() => {
-                          const gridSize = 50;
-                          const gridColor = "#f0f0f0";
-                          const lines = [];
-
-                          // Calculate visible area in canvas coordinates
-                          const startX =
-                            Math.floor(
-                              -viewport.x / viewport.scale / gridSize
-                            ) * gridSize;
-                          const startY =
-                            Math.floor(
-                              -viewport.y / viewport.scale / gridSize
-                            ) * gridSize;
-                          const endX =
-                            Math.ceil(
-                              (canvasSize.width - viewport.x) /
-                                viewport.scale /
-                                gridSize
-                            ) * gridSize;
-                          const endY =
-                            Math.ceil(
-                              (canvasSize.height - viewport.y) /
-                                viewport.scale /
-                                gridSize
-                            ) * gridSize;
-
-                          // Vertical lines
-                          for (let x = startX; x <= endX; x += gridSize) {
-                            lines.push(
-                              <Line
-                                key={`v-${x}`}
-                                points={[x, startY, x, endY]}
-                                stroke={gridColor}
-                                strokeWidth={1}
-                              />
-                            );
-                          }
-
-                          // Horizontal lines
-                          for (let y = startY; y <= endY; y += gridSize) {
-                            lines.push(
-                              <Line
-                                key={`h-${y}`}
-                                points={[startX, y, endX, y]}
-                                stroke={gridColor}
-                                strokeWidth={1}
-                              />
-                            );
-                          }
-
-                          return lines;
-                        })()}
-                      </Group>
+                      <CanvasGrid viewport={viewport} canvasSize={canvasSize} />
 
                       {/* Selection box */}
-                      {selectionBox.visible && (
-                        <Rect
-                          x={Math.min(selectionBox.startX, selectionBox.endX)}
-                          y={Math.min(selectionBox.startY, selectionBox.endY)}
-                          width={Math.abs(
-                            selectionBox.endX - selectionBox.startX
-                          )}
-                          height={Math.abs(
-                            selectionBox.endY - selectionBox.startY
-                          )}
-                          fill="rgba(59, 130, 246, 0.1)"
-                          stroke="rgb(59, 130, 246)"
-                          strokeWidth={1}
-                          dash={[5, 5]}
-                        />
-                      )}
+                      <SelectionBoxComponent selectionBox={selectionBox} />
 
                       {/* Render images */}
                       {images
@@ -2804,70 +2771,11 @@ export default function OverlayPage() {
           </div>
 
           {/* Mini-map */}
-          <div className="absolute top-4 right-2 md:right-4 z-20 bg-background/95 border rounded shadow-sm p-1 md:p-2">
-            <div className="relative w-32 h-24 md:w-48 md:h-32 bg-muted rounded overflow-hidden">
-              {/* Calculate bounds of all content */}
-              {(() => {
-                let minX = Infinity,
-                  minY = Infinity;
-                let maxX = -Infinity,
-                  maxY = -Infinity;
-
-                images.forEach((img) => {
-                  minX = Math.min(minX, img.x);
-                  minY = Math.min(minY, img.y);
-                  maxX = Math.max(maxX, img.x + img.width);
-                  maxY = Math.max(maxY, img.y + img.height);
-                });
-
-                const contentWidth = maxX - minX;
-                const contentHeight = maxY - minY;
-                const miniMapWidth = 192; // 48 * 4 (w-48 in tailwind)
-                const miniMapHeight = 128; // 32 * 4 (h-32 in tailwind)
-
-                // Calculate scale to fit content in minimap
-                const scaleX = miniMapWidth / contentWidth;
-                const scaleY = miniMapHeight / contentHeight;
-                const scale = Math.min(scaleX, scaleY) * 0.9; // 90% to add padding
-
-                // Center content in minimap
-                const offsetX = (miniMapWidth - contentWidth * scale) / 2;
-                const offsetY = (miniMapHeight - contentHeight * scale) / 2;
-
-                return (
-                  <>
-                    {/* Render tiny versions of images */}
-                    {images.map((img) => (
-                      <div
-                        key={img.id}
-                        className="absolute bg-primary/50"
-                        style={{
-                          left: `${(img.x - minX) * scale + offsetX}px`,
-                          top: `${(img.y - minY) * scale + offsetY}px`,
-                          width: `${img.width * scale}px`,
-                          height: `${img.height * scale}px`,
-                        }}
-                      />
-                    ))}
-
-                    {/* Viewport indicator */}
-                    <div
-                      className="absolute border-2 border-blue-500 bg-blue-500/10"
-                      style={{
-                        left: `${(-viewport.x / viewport.scale - minX) * scale + offsetX}px`,
-                        top: `${(-viewport.y / viewport.scale - minY) * scale + offsetY}px`,
-                        width: `${(canvasSize.width / viewport.scale) * scale}px`,
-                        height: `${(canvasSize.height / viewport.scale) * scale}px`,
-                      }}
-                    />
-                  </>
-                );
-              })()}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1 text-center">
-              Mini-map
-            </p>
-          </div>
+          <MiniMap
+            images={images}
+            viewport={viewport}
+            canvasSize={canvasSize}
+          />
 
           {/* {isSaving && (
             <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-30 bg-background/95 border rounded-md px-3 py-2 flex items-center gap-2 shadow-sm">
@@ -2877,81 +2785,11 @@ export default function OverlayPage() {
           )} */}
 
           {/* Zoom controls */}
-          <div className="absolute bottom-4 right-4 flex-col hidden md:flex items-end gap-2 z-20">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                const newScale = Math.min(5, viewport.scale * 1.2);
-                const centerX = canvasSize.width / 2;
-                const centerY = canvasSize.height / 2;
-
-                // Zoom towards center
-                const mousePointTo = {
-                  x: (centerX - viewport.x) / viewport.scale,
-                  y: (centerY - viewport.y) / viewport.scale,
-                };
-
-                setViewport({
-                  x: centerX - mousePointTo.x * newScale,
-                  y: centerY - mousePointTo.y * newScale,
-                  scale: newScale,
-                });
-              }}
-              className="w-10 h-10 p-0"
-            >
-              <ZoomIn className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                const newScale = Math.max(0.1, viewport.scale / 1.2);
-                const centerX = canvasSize.width / 2;
-                const centerY = canvasSize.height / 2;
-
-                // Zoom towards center
-                const mousePointTo = {
-                  x: (centerX - viewport.x) / viewport.scale,
-                  y: (centerY - viewport.y) / viewport.scale,
-                };
-
-                setViewport({
-                  x: centerX - mousePointTo.x * newScale,
-                  y: centerY - mousePointTo.y * newScale,
-                  scale: newScale,
-                });
-              }}
-              className="w-10 h-10 p-0"
-            >
-              <ZoomOut className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setViewport({ x: 0, y: 0, scale: 1 });
-              }}
-              className="w-10 h-10 p-0"
-              title="Reset view"
-            >
-              <Maximize2 className="h-4 w-4" />
-            </Button>
-            <div className="border text-xs text-muted-foreground text-center bg-background/80 px-2 py-1 rounded">
-              {Math.round(viewport.scale * 100)}%
-            </div>
-            <div className="border bg-background/80 p-2 flex flex-row rounded gap-2 items-center">
-              <Link href="https://fal.ai" target="_blank">
-                <LogoIcon className="w-10 h-10" />
-              </Link>
-              <div className="text-center text-xs">
-                Powered by <br />
-                <Link href="https://fal.ai" target="_blank">
-                  <span className="font-bold text-xl">Fal</span>
-                </Link>
-              </div>
-            </div>
-          </div>
+          <ZoomControls
+            viewport={viewport}
+            setViewport={setViewport}
+            canvasSize={canvasSize}
+          />
         </div>
       </main>
 
