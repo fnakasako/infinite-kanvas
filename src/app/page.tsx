@@ -2189,16 +2189,14 @@ export default function OverlayPage() {
 
                   {/* GitHub button */}
                   <Link
-                    className={
-                      (cn(
-                        buttonVariants({
-                          variant: "secondary",
-                          className: "gap-2",
-                          size: "sm",
-                        })
-                      ),
-                      "hidden md:block")
-                    }
+                    className={cn(
+                      buttonVariants({
+                        variant: "secondary",
+                        className: "gap-2",
+                        size: "sm",
+                      }),
+                      "hidden xl:flex"
+                    )}
                     href={"https://github.com/fal-ai-community/infinite-kanvas"}
                     target="_blank"
                     title="Star on GitHub"
