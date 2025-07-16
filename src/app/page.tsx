@@ -1723,19 +1723,19 @@ export default function OverlayPage() {
         <div className="relative w-full h-full">
           {/* Gradient Overlays */}
           <div
-            className="pointer-events-none absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-background/50 to-transparent z-10"
+            className="pointer-events-none absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-background/80 to-transparent z-10"
             aria-hidden="true"
           />
           <div
-            className="pointer-events-none absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-background/50 to-transparent z-10"
+            className="pointer-events-none absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-background/80 to-transparent z-10"
             aria-hidden="true"
           />
           <div
-            className="pointer-events-none absolute top-0 bottom-0 left-0 w-24 bg-gradient-to-r from-background/50 to-transparent z-10"
+            className="pointer-events-none absolute top-0 bottom-0 left-0 w-24 bg-gradient-to-r from-background/80 to-transparent z-10"
             aria-hidden="true"
           />
           <div
-            className="pointer-events-none absolute top-0 bottom-0 right-0 w-24 bg-gradient-to-l from-background/50 to-transparent z-10"
+            className="pointer-events-none absolute top-0 bottom-0 right-0 w-24 bg-gradient-to-l from-background/80 to-transparent z-10"
             aria-hidden="true"
           />
           <ContextMenu
